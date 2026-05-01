@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>公告管理系统 - 管理员</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        h1 { color: #667eea; margin-bottom: 10px; }
+        h2 { color: #333; margin-bottom: 15px; border-bottom: 2px solid #667eea; padding-bottom: 8px; }
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            resize: vertical;
+            min-height: 120px;
+            font-family: inherit;
+        }
+        textarea:focus { outline: none; border-color: #667eea; }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 10px;
+            margin-right: 10px;
+        }
+        button:hover { transform: translateY(-2px); }
+        .btn-danger { background: linear-gradient(135deg, #f44336 0%, #da190b 100%); }
+        .status {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .online { background: #4caf50; animation: pulse 1.5s infinite; }
+        .offline { background: #f44336; }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        .current-announcement {
+            background: #f0f4ff;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        th { background: #f5f5f5; }
+        tr:hover { background: #f9f9f9; }
+        .no-data { text-align: center; color: #999; padding: 20px; }
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #333;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            animation: slideIn 0.3s;
+            z-index: 1000;
+        }
+        .toast.success { background: #4caf50; }
+        .toast.error { background: #f44336; }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .info-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>🔐 公告管理系统</h1>
+            <div class="info-bar">
+                <div><span class="status online" id="statusDot"></span> <span id="statusText">WebSocket 已连接</span></div>
+                <div>👥 在线客户端: <strong id="clientCount">0</strong></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📝 发布公告</h2>
+            <textarea id="announcementInput" placeholder="输入公告内容..."></textarea>
+            <button onclick="publishAnnouncement()">📢 发布公告</button>
+            <button onclick="clearAnnouncement()" class="btn-danger">🗑️ 清空公告</button>
+        </div>
+
+        <div class="card">
+            <h2>📖 当前公告</h2>
+            <div id="currentAnnouncement" class="current-announcement">暂无公告</div>
+            <div id="announcementTime" style="font-size: 12px; color: #999; margin-top: 10px;"></div>
+        </div>
+
+        <div class="card">
+            <h2>💬 用户反馈</h2>
+            <button onclick="loadFeedbacks()" style="padding: 5px 12px; font-size: 12px;">刷新</button>
+            <div id="feedbackList">加载中...</div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+
+        function connectWebSocket() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${location.host}`);
+            
+            ws.onopen = () => {
+                document.getElementById('statusText').innerText = 'WebSocket 已连接';
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'announcement') {
+                    loadCurrentAnnouncement();
+                    showToast('新公告已发布！', 'success');
+                }
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('statusText').innerText = '连接断开，3秒后重连';
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        async function loadCurrentAnnouncement() {
+            try {
+                const res = await fetch('/api/announcement');
+                const data = await res.json();
+                if (data.success) {
+                    const div = document.getElementById('currentAnnouncement');
+                    div.innerHTML = data.data ? data.data.replace(/\n/g, '<br>') : '暂无公告';
+                    if (data.timestamp) {
+                        document.getElementById('announcementTime').innerHTML = `📅 ${new Date(data.timestamp).toLocaleString()}`;
+                    }
+                }
+            } catch (e) {
+                console.error('加载失败:', e);
+            }
+        }
+
+        async function publishAnnouncement() {
+            const content = document.getElementById('announcementInput').value.trim();
+            if (!content) {
+                showToast('请输入公告内容', 'error');
+                return;
+            }
+            
+            try {
+                const res = await fetch('/api/announcement', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('公告发布成功！', 'success');
+                    document.getElementById('announcementInput').value = '';
+                    loadCurrentAnnouncement();
+                    loadFeedbacks();
+                } else {
+                    showToast(data.message, 'error');
+                }
+            } catch (e) {
+                showToast('发布失败: ' + e.message, 'error');
+            }
+        }
+
+        async function clearAnnouncement() {
+            if (!confirm('确定要清空公告吗？')) return;
+            
+            try {
+                const res = await fetch('/api/announcement', { method: 'DELETE' });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('公告已清空', 'success');
+                    loadCurrentAnnouncement();
+                }
+            } catch (e) {
+                showToast('清空失败: ' + e.message, 'error');
+            }
+        }
+
+        async function loadFeedbacks() {
+            try {
+                const res = await fetch('/api/feedbacks');
+                const data = await res.json();
+                const container = document.getElementById('feedbackList');
+                
+                if (data.success && data.data.length > 0) {
+                    let html = '<table><thead><tr><th>ID</th><th>反馈内容</th><th>时间</th></tr></thead><tbody>';
+                    data.data.forEach(f => {
+                        html += `<tr>
+                            <td>${f.id}</td>
+                            <td style="max-width: 400px; word-wrap: break-word;">${escapeHtml(f.content)}</td>
+                            <td>${new Date(f.timestamp).toLocaleString()}</td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table>';
+                    container.innerHTML = html;
+                } else {
+                    container.innerHTML = '<div class="no-data">📭 暂无反馈</div>';
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="no-data">加载失败</div>';
+            }
+        }
+
+        async function loadClientCount() {
+            try {
+                const res = await fetch('/api/clients');
+                const data = await res.json();
+                document.getElementById('clientCount').innerText = data.count;
+            } catch (e) {}
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showToast(msg, type) {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerText = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        connectWebSocket();
+        loadCurrentAnnouncement();
+        loadFeedbacks();
+        setInterval(loadClientCount, 5000);
+        setInterval(loadFeedbacks, 30000);
+    </script>
+</body>
+</html>
